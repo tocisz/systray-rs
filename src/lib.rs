@@ -43,6 +43,11 @@ impl std::fmt::Display for SystrayError {
     }
 }
 
+impl From<std::sync::mpsc::RecvError> for SystrayError {
+    fn from(_: std::sync::mpsc::RecvError) -> SystrayError {
+        SystrayError::UnknownError
+    }
+}
 pub struct Application {
     window: api::api::Window,
     menu_idx: u32,
@@ -114,22 +119,16 @@ impl Application {
         self.window.quit()
     }
 
-    pub fn wait_for_message(&mut self) {
-        loop {
-            let msg;
-            match self.rx.recv() {
-                Ok(m) => msg = m,
-                Err(_) => {
-                    self.quit();
-                    break;
-                }
-            }
-            if self.callback.contains_key(&msg.menu_index) {
-                let f = self.callback.remove(&msg.menu_index).unwrap();
-                f(self);
-                self.callback.insert(msg.menu_index, f);
-            }
+    pub fn wait_for_message(&mut self) -> Result<(), SystrayError> {
+        let msg = self.rx.recv()?;
+
+        if self.callback.contains_key(&msg.menu_index) {
+            let f = self.callback.remove(&msg.menu_index).unwrap();
+            f(self);
+            self.callback.insert(msg.menu_index, f);
         }
+
+        Ok(())
     }
 }
 
