@@ -20,13 +20,15 @@ extern crate libappindicator;
 pub mod api;
 
 use std::collections::HashMap;
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub enum SystrayError {
     OsError(String),
     NotImplementedError,
-    UnknownError,
+    Disconnected,
+    Timeout,
 }
 
 pub struct SystrayEvent {
@@ -38,14 +40,23 @@ impl std::fmt::Display for SystrayError {
         match self {
             &SystrayError::OsError(ref err_str) => write!(f, "OsError: {}", err_str),
             &SystrayError::NotImplementedError => write!(f, "Functionality is not implemented yet"),
-            &SystrayError::UnknownError => write!(f, "Unknown error occurrred"),
+            &SystrayError::Disconnected => write!(f, "Application channel disconnected"),
+            &SystrayError::Timeout => write!(f, "Timeout"),
         }
     }
 }
 
 impl From<std::sync::mpsc::RecvError> for SystrayError {
     fn from(_: std::sync::mpsc::RecvError) -> SystrayError {
-        SystrayError::UnknownError
+        SystrayError::Disconnected
+    }
+}
+impl From<RecvTimeoutError> for SystrayError {
+    fn from(e: RecvTimeoutError) -> SystrayError {
+        match e {
+            RecvTimeoutError::Timeout      => SystrayError::Timeout,
+            RecvTimeoutError::Disconnected => SystrayError::Disconnected
+        }
     }
 }
 pub struct Application {
@@ -129,6 +140,25 @@ impl Application {
         }
 
         Ok(())
+    }
+
+    pub fn wait_for_message_timeout(&mut self, timeout: Duration) -> Result<(), SystrayError> {
+        let msg = match self.rx.recv_timeout(timeout) {
+            Ok(msg) => Some(msg),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(e) => { return Err(SystrayError::from(e)); }
+        };
+
+        Ok(match msg {
+            Some(msg) => {
+                if self.callback.contains_key(&msg.menu_index) {
+                    let f = self.callback.remove(&msg.menu_index).unwrap();
+                    f(self);
+                    self.callback.insert(msg.menu_index, f);
+                }
+            },
+            None => ()
+        })
     }
 }
 
